@@ -160,6 +160,7 @@ Dir.mktmpdir("ruby-vendor-") do |vendor_dir|
   end
   Dir.chdir(prefix) do
     filename = "#{name}.tgz"
+    filename = filename.sub("ruby-", "ruby-build-") if build
 
     pipe "ls"
     puts "Writing #{filename}"
