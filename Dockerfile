@@ -1,4 +1,4 @@
-FROM fabiokung/cedar
+FROM heroku/cedar:14
 MAINTAINER hone
 
 # need autoconf 2.69 for compiling ruby 2.1+

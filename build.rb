@@ -73,7 +73,7 @@ Dir.chdir(cache_dir) do
       end
     else
       puts "Fetching #{git_url}"
-      pipe "git clone #{uri}"
+      pipe "git clone --depth 1 #{uri}"
     end
 
   elsif svn_url
@@ -142,7 +142,7 @@ Dir.mktmpdir("ruby-vendor-") do |vendor_dir|
       "make install"
     ]
     cmds.unshift("#{configure_env} autoconf") if git_url
-    cmds.unshift("chmod +x ./tool/*") if git_url
+    cmds.unshift("chmod +x ./tool/*") if git_url && File.exist?("./tool")
     pipe(cmds.join(" && "))
   end
   if rubygems
