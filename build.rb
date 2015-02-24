@@ -73,7 +73,7 @@ Dir.chdir(cache_dir) do
       end
     else
       puts "Fetching #{git_url}"
-      pipe "git clone #{uri}"
+      pipe "git clone --depth 1 #{uri}"
     end
 
   elsif svn_url
