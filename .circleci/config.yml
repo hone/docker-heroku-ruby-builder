@@ -1,0 +1,156 @@
+version: 2.1
+
+jobs:
+  build:
+    # need to use machine executor for volume mounting in docker
+    # https://circleci.com/docs/2.0/executor-types/#using-machine
+    # can use docker cp instead
+    # https://circleci.com/docs/2.0/building-docker-images/#mounting-folders
+    machine: true
+    parameters:
+      stack:
+        type: string
+    steps:
+      - checkout
+      - run: ruby -v > /tmp/ruby_version
+      - restore_cache:
+          keys:
+            - gem-cache-v1-{{ arch }}-{{ checksum "/tmp/ruby_version" }}-{{ .Branch }}-{{ checksum "Gemfile.lock" }}
+            - gem-cache-v1-{{ arch }}-{{ checksum "/tmp/ruby_version" }}-{{ .Branch }}
+      - run:
+          name: Bundler
+          command: |
+            bundle install --path vendor/bundle
+            bundle clean
+      - save_cache:
+          key: gem-cache-v1-{{ arch }}-{{ checksum "/tmp/ruby_version" }}-{{ .Branch }}-{{ checksum "Gemfile.lock" }}
+          paths:
+            - vendor/bundle
+      - run:
+          name: Build Docker Image
+          command: bundle exec rake generate_image[<< parameters.stack >>]
+      - run:
+          name: Generate Build Script
+          command: bundle exec rake new[$RUBY_VERSION,<< parameters.stack >>]
+      - run:
+          name: Build Ruby
+          command: bash rubies/<< parameters.stack >>/ruby-$RUBY_VERSION.sh
+      - store_artifacts:
+          path: builds
+      - run:
+          name: Setup Circle CI Workspace
+          command: |
+            mkdir -p store/
+            echo $CIRCLE_BUILD_NUM > store/circle_build_num
+            cp -rf builds/ store/
+            cp /tmp/ruby_version store/
+      - persist_to_workspace:
+          root: store
+          paths:
+            - circle_build_num
+            - builds
+            - ruby_version
+
+  test:
+    docker:
+      - image: ruby:2.5-stretch
+    parameters:
+      stack:
+        type: string
+    steps:
+      - run:
+          name: Setup Heroku
+          command: |
+            curl https://cli-assets.heroku.com/install.sh | sh
+            printf "machine api.heroku.com\n  login jkutner+tunnels@gmail.com\n  password $HEROKU_API_KEY\n" > ~/.netrc
+            chmod 0600 ~/.netrc
+      - checkout
+      - attach_workspace:
+          at: /tmp/store/
+      - restore_cache:
+          keys:
+            - gem-cache-v1-{{ arch }}-{{ checksum "/tmp/store/ruby_version" }}-{{ .Branch }}-{{ checksum "Gemfile.lock" }}
+            - gem-cache-v1-{{ arch }}-{{ checksum "/tmp/store/ruby_version" }}-{{ .Branch }}
+      - run: bundle install --path vendor/bundle
+      - save_cache:
+          key: gem-cache-v1-{{ arch }}-{{ checksum "/tmp/store/ruby_version" }}-{{ .Branch }}-{{ checksum "Gemfile.lock" }}
+          paths:
+            - vendor/bundle
+      - run:
+          name: Test
+          command: |
+            CIRCLE_PREVIOUS_BUILD_NUM=`cat /tmp/store/circle_build_num`
+            bundle exec rake test[$RUBY_VERSION,<< parameters.stack >>]
+
+  upload-to-s3:
+    docker:
+      - image: circleci/python:2.7-stretch
+    parameters:
+      profile:
+        type: string
+      stack:
+        type: string
+    steps:
+      - attach_workspace:
+          at: /tmp/store
+      - run:
+          name: Install AWS CLI
+          command: sudo pip install awscli
+      - run:
+          name: Setup AWS Credentials
+          command: |
+            mkdir -p ~/.aws/
+            printf "[$STAGING_BUCKET_NAME]\naws_access_key_id = $STAGING_AWS_ACCESS_KEY_ID\naws_secret_access_key=$STAGING_AWS_SECRET_ACCESS_KEY" > ~/.aws/credentials
+      - run:
+          name: Upload Binary to S3
+          command: |
+            aws s3 cp \
+              /tmp/store/builds/<< parameters.stack >>/ruby-$RUBY_VERSION.tgz \
+              s3://<< parameters.profile >>/<< parameters.stack >>/ruby-$RUBY_VERSION.tgz \
+              --profile << parameters.profile >> \
+              --acl public-read
+
+workflows:
+  version: 2.1
+  heroku-18:
+    jobs:
+      - build:
+          stack: "heroku-18"
+      - test:
+          stack: "heroku-18"
+          requires:
+            - build
+      - upload-to-s3:
+          stack: "heroku-18"
+          profile: $STAGING_BUCKET_NAME
+          name: Upload to S3 Staging
+          requires:
+            - test
+  heroku-16:
+    jobs:
+      - build:
+          stack: "heroku-16"
+      - test:
+          stack: "heroku-16"
+          requires:
+            - build
+      - upload-to-s3:
+          stack: "heroku-16"
+          profile: $STAGING_BUCKET_NAME
+          name: Upload to S3 Staging
+          requires:
+            - test
+  cedar-14:
+    jobs:
+      - build:
+          stack: "cedar-14"
+      - test:
+          stack: "cedar-14"
+          requires:
+            - build
+      - upload-to-s3:
+          stack: "cedar-14"
+          profile: $STAGING_BUCKET_NAME
+          name: Upload to S3 Staging
+          requires:
+            - test
